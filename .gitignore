@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+
+# C / Compilation
+*.o
+*.so
+*.a
+*.out
+vendor/linux_libnfc-nci/out/  # 忽略原廠庫的編譯輸出
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
+
+# Custom Logs
+*.csv
+*.log
