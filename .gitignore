@@ -1,20 +1,58 @@
-# Python
+# --- Python ---
 __pycache__/
 *.py[cod]
+*$py.class
 venv/
+env/
+.env
+backend/logs/*.log
+*.csv
 
-# C / Compilation
+# --- C/C++ & Build Artifacts ---
+# Ignore object files and libraries
 *.o
-*.so
+*.lo
+*.la
 *.a
-*.out
-vendor/linux_libnfc-nci/out/  # 忽略原廠庫的編譯輸出
+*.so
+*.so.*
+*.dylib
 
-# OS / Editor
+# Ignore Autotools generated files (keep vendor clean)
+.deps/
+.libs/
+Makefile
+Makefile.in
+aclocal.m4
+automake.cache
+autom4te.cache/
+config.guess
+config.h
+config.h.in
+config.log
+config.status
+config.sub
+configure
+depcomp
+install-sh
+libtool
+ltmain.sh
+missing
+stamp-h1
+compile
+test-driver
+
+# Ignore compiled executables in vendor demos
+nfcDemoApp
+linux_libnfc-nci/demoapp/nfcDemoApp
+
+# Ignore our own compiled tool (we will build it on target)
+# Assuming nfc_tool executable will be in root or src
+nfc_tool
+
+# --- System & Editor ---
 .DS_Store
 .vscode/
 .idea/
-
-# Custom Logs
-*.csv
-*.log
+*.swp
+*~
