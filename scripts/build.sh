@@ -1,51 +1,38 @@
 #!/bin/bash
 
-# 設定路徑變數 (確保腳本在哪執行都能找到根目錄)
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-PROJECT_ROOT="$SCRIPT_DIR/.."
-VENDOR_DIR="$PROJECT_ROOT/vendor/linux_libnfc-nci"
+# 定義路徑 (依據您上傳的結構)
+ROOT_DIR=$(pwd)
+SRC_DIR="$ROOT_DIR/src"
+VENDOR_DIR="$ROOT_DIR/vendor/linux_libnfc-nci"
+INCLUDE_DIR="$VENDOR_DIR/src/include"
+LIB_DIR="/usr/local/lib" # 假設您之前執行 sudo make install 安裝到了這裡
 
-# 1. 檢查 Header 檔是否存在
-HEADER_DIR="$VENDOR_DIR/src/include"
-if [ ! -f "$HEADER_DIR/linux_nfc_api.h" ]; then
-    echo "❌ Error: Header file not found at $HEADER_DIR/linux_nfc_api.h"
-    echo "   Please check vendor submodule or path."
+# 檢查必要的 Library 是否存在
+if [ ! -f "$LIB_DIR/libnfc_nci_linux.so" ]; then
+    echo "[Error] libnfc_nci_linux.so not found in $LIB_DIR"
+    echo "Please go to $VENDOR_DIR and run 'sudo make install' first."
     exit 1
 fi
 
-# 2. 檢查 Library 連結方式
-# 優先檢查系統是否有安裝 (make install)
-if ldconfig -p | grep -q libnfc_nci_linux; then
-    echo "ℹ️  Using system installed library (libnfc_nci_linux)"
-    LIB_FLAGS="-lnfc_nci_linux"
-else
-    # 若系統無，則嘗試連結 vendor 內編譯好的 .so
-    # 注意: Autotools 編譯出的 .so 通常在 .libs 隱藏目錄下
-    LOCAL_LIB_DIR="$VENDOR_DIR/.libs"
-    if [ -d "$LOCAL_LIB_DIR" ]; then
-        echo "ℹ️  Using local vendor library from $LOCAL_LIB_DIR"
-        # -Wl,-rpath 確保執行時找得到這個路徑，不用設 LD_LIBRARY_PATH
-        LIB_FLAGS="-L$LOCAL_LIB_DIR -lnfc_nci_linux -Wl,-rpath,$LOCAL_LIB_DIR"
-    else
-        echo "⚠️  Warning: Local library build directory not found. Assuming -lnfc_nci_linux works globally."
-        LIB_FLAGS="-lnfc_nci_linux"
-    fi
-fi
+echo "Building nfc_tool..."
 
-# 3. 執行編譯
-echo "🔨 Compiling nfc_tool..."
-gcc -o "$PROJECT_ROOT/nfc_tool" \
-    "$PROJECT_ROOT/src/nfc_tool.c" \
-    -I"$HEADER_DIR" \
-    $LIB_FLAGS \
+# 編譯指令
+# -I: 包含 header
+# -L: 指定 library 路徑
+# -l: 連結 library (nfc_nci_linux 和 pthread)
+# -Wl,-rpath: 執行時自動尋找 .so
+gcc -o nfc_tool \
+    "$SRC_DIR/nfc_tool.c" \
+    "$SRC_DIR/ndef_helper.c" \
+    -I "$SRC_DIR" \
+    -I "$INCLUDE_DIR" \
+    -L "$LIB_DIR" \
+    -lnfc_nci_linux \
     -lpthread \
-    -Wall
+    -Wl,-rpath,"$LIB_DIR"
 
-# 4. 檢查結果
 if [ $? -eq 0 ]; then
-    echo "✅ Build Success! Executable created at: $PROJECT_ROOT/nfc_tool"
-    echo "   Run with: sudo ./nfc_tool read_verify"
+    echo "[Success] Binary created: ./nfc_tool"
 else
-    echo "❌ Build Failed."
-    exit 1
+    echo "[Fail] Compilation failed."
 fi

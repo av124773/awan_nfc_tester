@@ -1,228 +1,248 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
 #include <string.h>
 #include <unistd.h>
-#include <time.h>
-#include <getopt.h>
 #include <pthread.h>
+#include <time.h>
+#include <errno.h>
 
-// 引入 NXP NFC API
 #include "linux_nfc_api.h"
+#include "ndef_helper.h"
 
-// 定義輸出標記
-#define JSON_START "__NFC_JSON_START__"
-#define JSON_END "__NFC_JSON_END__"
+#define OP_MODE_READ_VERIFY  1
+#define OP_MODE_FORMAT_WRITE 2
 
-// 全域變數控制
-int g_timeout = 10;
-int g_tag_detected = 0;
-nfc_tag_info_t g_tagInfo;
-pthread_cond_t g_cond = PTHREAD_COND_INITIALIZER;
-pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
+typedef struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t  cond;
+    int             state;          // 0: Waiting, 1: Arrived
+    nfc_tag_info_t  tagInfo;
+} AppContext;
 
-// --- 輔助函式 ---
+AppContext g_ctx;
 
-// 輸出標準化 JSON 結果
-void print_json_result(const char* status, const char* msg, const char* uid, const char* data) {
-    // 強制 Flush 確保 Python 能讀到
-    fflush(stdout); 
-    
-    printf("\n%s\n", JSON_START);
-    printf("{\n");
-    printf("  \"status\": \"%s\",\n", status);
-    if (msg) printf("  \"msg\": \"%s\",\n", msg);
-    if (uid) printf("  \"uid\": \"%s\",\n", uid);
-    if (data) printf("  \"data\": \"%s\",\n", data);
-    
-    // 永遠回傳時間戳記方便除錯
-    printf("  \"timestamp\": %ld\n", time(NULL));
-    printf("}\n");
-    printf("%s\n", JSON_END);
-    
-    fflush(stdout);
-}
+int g_mode = 0;
+char g_expect_data[256] = {0};
+char g_write_payload[256] = {0};
+int g_write_is_uri = 0;
 
-// 發生錯誤時直接退出
-void fatal_error(const char* msg) {
-    print_json_result("ERROR", msg, NULL, NULL);
-    exit(1);
-}
-
-// --- NXP Callback ---
-
+// --- Callback ---
 void onTagArrival(nfc_tag_info_t *pTagInfo) {
-    // 複製 Tag 資訊到全域變數
-    memcpy(&g_tagInfo, pTagInfo, sizeof(nfc_tag_info_t));
-    
-    pthread_mutex_lock(&g_mutex);
-    g_tag_detected = 1;
-    pthread_cond_signal(&g_cond); // 喚醒主執行緒
-    pthread_mutex_unlock(&g_mutex);
-}
-
-void onTagDeparture(void) {
-    // 暫不處理 Tag 離開
-}
-
-// --- 核心邏輯 ---
-
-// 等待 Tag 靠近
-void wait_for_tag() {
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    ts.tv_sec += g_timeout;
-
-    pthread_mutex_lock(&g_mutex);
-    // 等待 Condition Variable 或 超時
-    int ret = 0;
-    while (!g_tag_detected && ret == 0) {
-        ret = pthread_cond_timedwait(&g_cond, &g_mutex, &ts);
+    if (pTagInfo == NULL) return;
+    pthread_mutex_lock(&g_ctx.mutex);
+    if (g_ctx.state == 0) {
+        memcpy(&g_ctx.tagInfo, pTagInfo, sizeof(nfc_tag_info_t));
+        g_ctx.state = 1;
+        pthread_cond_signal(&g_ctx.cond);
     }
-    pthread_mutex_unlock(&g_mutex);
+    pthread_mutex_unlock(&g_ctx.mutex);
+}
 
-    if (ret != 0 || !g_tag_detected) {
-        fatal_error("TIMEOUT: No tag detected.");
+void onTagDeparture(void) { }
+
+// --- Helpers ---
+void print_json_result(const char* status, const char* uid, const char* msg, const char* error_code) {
+    printf("__NFC_JSON_START__{\"status\": \"%s\", \"uid\": \"%s\", \"msg\": \"%s\", \"error\": \"%s\"}__NFC_JSON_END__\n",
+           status, uid ? uid : "", msg ? msg : "", error_code ? error_code : "");
+}
+
+void get_uid_string(nfc_tag_info_t* tag, char* buffer) {
+    buffer[0] = 0;
+    for (unsigned int i = 0; i < tag->uid_length; i++) {
+        char temp[4];
+        sprintf(temp, "%02X", tag->uid[i]);
+        strcat(buffer, temp);
     }
 }
 
-// 格式化並寫入 (含驗證)
-void do_format_write(char* payload) {
-    int res = 0;
-    char uid_str[32] = {0};
-    
-    // 1. 等待 Tag
-    wait_for_tag();
-    
-    // 轉 Hex UID
-    for(int i=0; i<g_tagInfo.uid_length; i++) {
-        sprintf(&uid_str[i*2], "%02X", g_tagInfo.uid[i]);
+// --- Logic (Aligned with DemoApp) ---
+
+int check_is_ndef_with_retry(unsigned int handle, ndef_info_t *info) {
+    int max_retries = 3;
+    // DemoApp 並沒有重試，但保留一點容錯是好的
+    for (int i = 0; i < max_retries; i++) {
+        if (nfcTag_isNdef(handle, info) == 1) return 1;
+        usleep(100 * 1000);
+    }
+    return 0;
+}
+
+int perform_read_verify(unsigned int handle, char* out_uid) {
+    unsigned char read_buf[4096];
+    char parsed_str[4096];
+    int res;
+    nfc_friendly_type_t friendly_type = NDEF_FRIENDLY_TYPE_OTHER;
+    ndef_info_t ndefInfo;
+
+    // 1. Check NDEF (比照 DemoApp 流程)
+    if (check_is_ndef_with_retry(handle, &ndefInfo) != 1) {
+        print_json_result("FAIL", out_uid, "Tag is not NDEF", "TAG_ERR");
+        return -1;
     }
 
-    // 2. 格式化 (Format)
-    // 嘗試寫入空的 NDEF 訊息通常會觸發格式化流程
-    // 注意: NXP API 的 nfcFormatTag 可能需要特定條件，這裡使用寫入覆蓋策略
+    // 2. Read NDEF
+    if (ndefInfo.current_ndef_length > sizeof(read_buf)) {
+        print_json_result("FAIL", out_uid, "NDEF too large", "SIZE_ERR");
+        return -1;
+    }
     
-    // 建構 NDEF 訊息 (簡單 Text Record)
-    nfc_ndef_message_t ndefMsg;
-    // ... 這裡需要實作 NDEF Record 建構邏輯 (省略細節，假設已有 helper) ...
-    // 為簡化 Demo，我們假設 nfc_write_ndef 內部處理了封裝
+    // 如果長度為0，視為空標籤
+    if (ndefInfo.current_ndef_length == 0) {
+         if (strlen(g_expect_data) > 0) {
+             print_json_result("FAIL", out_uid, "Empty Tag", "VERIFY_FAIL");
+             return -1;
+         }
+         print_json_result("PASS", out_uid, "Empty", "NONE");
+         return 0;
+    }
+
+    res = nfcTag_readNdef(handle, read_buf, ndefInfo.current_ndef_length, &friendly_type);
+    if (res < 0) {
+        print_json_result("FAIL", out_uid, "Read failed", "READ_ERR");
+        return -1;
+    }
+
+    // 3. Parse & Verify
+    if (ParseNDEFToString(read_buf, (unsigned int)res, parsed_str, sizeof(parsed_str)) != 0) {
+        print_json_result("FAIL", out_uid, "Parse error", "PARSE_ERR");
+        return -1;
+    }
+
+    if (strlen(g_expect_data) > 0) {
+        if (strcmp(parsed_str, g_expect_data) == 0) {
+            print_json_result("PASS", out_uid, parsed_str, "NONE");
+            return 0;
+        } else {
+            char err_msg[512];
+            snprintf(err_msg, sizeof(err_msg), "Mismatch: Exp[%s] Got[%s]", g_expect_data, parsed_str);
+            print_json_result("FAIL", out_uid, err_msg, "VERIFY_FAIL");
+            return -1;
+        }
+    } else {
+        print_json_result("PASS", out_uid, parsed_str, "NONE");
+        return 0;
+    }
+}
+
+int perform_format_write(unsigned int handle, char* out_uid) {
+    int res;
+    unsigned char ndef_buf[1024];
+    size_t ndef_len = 0;
+
+    // Prepare Payload
+    NdefType type = g_write_is_uri ? NDEF_TYPE_URI : NDEF_TYPE_TEXT;
+    if (BuildNDEFBuffer(type, g_write_payload, ndef_buf, &ndef_len) != 0) {
+        print_json_result("FAIL", out_uid, "Build NDEF failed", "BUILD_ERR");
+        return -1;
+    }
+
+    // Format Logic (DemoApp Style)
+    // DemoApp logic: if (!isFormatable) check isNdef. 
+    // Simplified: Just try to write first if it's NDEF, if not try format.
     
-    // 3. 寫入 (Write)
-    // 這裡我們直接傳入 payload 字串作為 Text Record
-    // 實際開發需參考 demoapp/tools.c 的 NDEF 封裝
-    res = nfcWriteTag(NDEF_TYPE_TEXT, payload, strlen(payload));
+    ndef_info_t info;
+    int is_ndef = nfcTag_isNdef(handle, &info);
     
+    if (!is_ndef) {
+        if (nfcTag_isFormatable(handle)) {
+            if (nfcTag_formatTag(handle) != 0) {
+                print_json_result("FAIL", out_uid, "Format failed", "FORMAT_ERR");
+                return -1;
+            }
+        } else {
+            print_json_result("FAIL", out_uid, "Tag not writable", "TAG_ERR");
+            return -1;
+        }
+    }
+
+    // Write
+    res = nfcTag_writeNdef(handle, ndef_buf, (unsigned int)ndef_len);
     if (res != 0) {
-        fatal_error("WRITE_FAILED: Failed to write NDEF.");
+        print_json_result("FAIL", out_uid, "Write failed", "WRITE_ERR");
+        return -1;
     }
 
-    // 4. 回讀驗證 (Read Back)
-    // 為了安全，重新讀取一次
-    // 注意: NXP API 在寫入後可能需要一點時間
-    usleep(100000); // 100ms delay
-    
-    // 執行讀取
-    // 這裡需呼叫 NXP 的讀取 API 並解析 NDEF
-    // res = nfcReadTag(...); 
-    
-    // 5. 比對 (Verify)
-    // if (strcmp(read_back_data, payload) != 0) {
-    //    fatal_error("VERIFY_FAILED: Data mismatch.");
-    // }
-
-    // 6. 成功
-    print_json_result("PASS", "Write and Verify Success", uid_str, payload);
-}
-
-// 讀取並驗證
-void do_read_verify(char* expect_str) {
-    wait_for_tag();
-    
-    char uid_str[32] = {0};
-    for(int i=0; i<g_tagInfo.uid_length; i++) {
-        sprintf(&uid_str[i*2], "%02X", g_tagInfo.uid[i]);
-    }
-    
-    // 執行讀取...
-    // 模擬讀取到的資料
-    char read_data[128] = "en:TestOrder:12345"; 
-    
-    if (expect_str && strstr(read_data, expect_str) == NULL) {
-        char err_msg[256];
-        snprintf(err_msg, sizeof(err_msg), "VERIFY_FAILED: Expected '%s', got '%s'", expect_str, read_data);
-        fatal_error(err_msg);
-    }
-    
-    print_json_result("PASS", "Read Success", uid_str, read_data);
+    // Read Back Verify
+    usleep(50 * 1000); // Small delay
+    strncpy(g_expect_data, g_write_payload, sizeof(g_expect_data));
+    return perform_read_verify(handle, out_uid);
 }
 
 // --- Main ---
-
-int main(int argc, char **argv) {
-    // 1. 初始化環境
-    // 關閉 stdout 緩衝，避免 Python 卡住
-    setvbuf(stdout, NULL, _IONBF, 0);
-    
-    // 解析參數
+int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fatal_error("Usage: nfc_tool <command> [options]");
-    }
-    
-    char* command = argv[1];
-    char* payload = NULL;
-    char* expect = NULL;
-    
-    // 簡單參數解析 (建議改用 getopt)
-    for(int i=2; i<argc; i++) {
-        if(strcmp(argv[i], "--timeout") == 0 && i+1 < argc) {
-            g_timeout = atoi(argv[++i]);
-        }
-        else if(strcmp(argv[i], "--payload") == 0 && i+1 < argc) {
-            payload = argv[++i];
-        }
-        else if(strcmp(argv[i], "--expect") == 0 && i+1 < argc) {
-            expect = argv[++i];
-        }
+        printf("Usage: %s <read|verify|write|write_uri> [data]\n", argv[0]);
+        return 1;
     }
 
-    // 2. 初始化 NXP Stack
-    // nfcCallbacks_t callbacks;
-    // callbacks.onTagArrival = onTagArrival;
-    // callbacks.onTagDeparture = onTagDeparture;
+    if (strcmp(argv[1], "read") == 0) g_mode = OP_MODE_READ_VERIFY;
+    else if (strcmp(argv[1], "verify") == 0) {
+        g_mode = OP_MODE_READ_VERIFY;
+        if (argc >= 3) strncpy(g_expect_data, argv[2], sizeof(g_expect_data));
+    } else if (strcmp(argv[1], "write") == 0) {
+        g_mode = OP_MODE_FORMAT_WRITE;
+        g_write_is_uri = 0;
+        if (argc >= 3) strncpy(g_write_payload, argv[2], sizeof(g_write_payload));
+    } else if (strcmp(argv[1], "write_uri") == 0) {
+        g_mode = OP_MODE_FORMAT_WRITE;
+        g_write_is_uri = 1;
+        if (argc >= 3) strncpy(g_write_payload, argv[2], sizeof(g_write_payload));
+    }
 
-    // 使用系統定義的正確型別名稱
-    nfcTagCallback_t callbacks; 
-    callbacks.onTagArrival = onTagArrival;
-    callbacks.onTagDeparture = onTagDeparture;
+    pthread_mutex_init(&g_ctx.mutex, NULL);
+    pthread_cond_init(&g_ctx.cond, NULL);
+    g_ctx.state = 0;
 
-    // registerTagCallback 返回 void，不要接收返回值 (res =)
-    nfcManager_registerTagCallback(&callbacks);
-    
-    int res = nfcManager_doInitialize();
-    if (res != 0) fatal_error("INIT_FAILED: NXP Stack Init Failed");
-    
-    res = nfcManager_registerTagCallback(&callbacks);
-    if (res != 0) fatal_error("INIT_FAILED: Callback Register Failed");
-    
-    res = nfcManager_enableDiscovery(DEFAULT_NFA_TECH_MASK, 0, 0, 0);
-    if (res != 0) fatal_error("INIT_FAILED: Discovery Enable Failed");
+    InitializeLogLevel();
 
-    // 3. 執行指令
-    if (strcmp(command, "format_write") == 0) {
-        if (!payload) fatal_error("PARAM_ERROR: --payload required");
-        do_format_write(payload);
+    if (doInitialize() != 0) {
+        print_json_result("FAIL", "", "NFC Init failed", "INIT_ERR");
+        return 1;
+    }
+
+    nfcTagCallback_t cb;
+    cb.onTagArrival = onTagArrival;
+    cb.onTagDeparture = onTagDeparture;
+    registerTagCallback(&cb);
+
+    doEnableDiscovery(DEFAULT_NFA_TECH_MASK, 0x00, 0, 0);
+
+    // Wait Phase
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += 10; // 10s Timeout
+
+    pthread_mutex_lock(&g_ctx.mutex);
+    int wait_res = 0;
+    while (g_ctx.state == 0 && wait_res == 0) {
+        wait_res = pthread_cond_timedwait(&g_ctx.cond, &g_ctx.mutex, &ts);
+    }
+    pthread_mutex_unlock(&g_ctx.mutex);
+
+    if (wait_res == ETIMEDOUT) {
+        print_json_result("FAIL", "", "Timeout", "TIMEOUT");
     } 
-    else if (strcmp(command, "read_verify") == 0) {
-        do_read_verify(expect); // expect 可以是 NULL
-    }
-    else {
-        fatal_error("PARAM_ERROR: Unknown command");
+    else if (g_ctx.state == 1) {
+        char uid_str[32];
+        get_uid_string(&g_ctx.tagInfo, uid_str);
+        
+        // CORRECTION: DO NOT DISABLE DISCOVERY HERE!
+        // DemoApp keeps discovery active during read/write.
+        
+        if (g_mode == OP_MODE_FORMAT_WRITE) {
+            perform_format_write(g_ctx.tagInfo.handle, uid_str);
+        } else {
+            perform_read_verify(g_ctx.tagInfo.handle, uid_str);
+        }
     }
 
-    // 4. 結束清理
-    nfcManager_disableDiscovery();
-    nfcManager_doDeinitialize();
+    // Cleanup Phase (Disable Discovery ONLY at the end)
+    disableDiscovery(); // Use disableDiscovery() not doDisableDiscovery() as per DemoApp
+    deregisterTagCallback();
+    doDeinitialize();
     
+    pthread_mutex_destroy(&g_ctx.mutex);
+    pthread_cond_destroy(&g_ctx.cond);
+
     return 0;
 }
