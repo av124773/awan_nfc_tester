@@ -187,9 +187,17 @@ int main(int argc, char **argv) {
     }
 
     // 2. 初始化 NXP Stack
-    nfcCallbacks_t callbacks;
+    // nfcCallbacks_t callbacks;
+    // callbacks.onTagArrival = onTagArrival;
+    // callbacks.onTagDeparture = onTagDeparture;
+
+    // 使用系統定義的正確型別名稱
+    nfcTagCallback_t callbacks; 
     callbacks.onTagArrival = onTagArrival;
     callbacks.onTagDeparture = onTagDeparture;
+
+    // registerTagCallback 返回 void，不要接收返回值 (res =)
+    nfcManager_registerTagCallback(&callbacks);
     
     int res = nfcManager_doInitialize();
     if (res != 0) fatal_error("INIT_FAILED: NXP Stack Init Failed");
