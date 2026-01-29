@@ -7,6 +7,9 @@ env/
 .env
 backend/logs/*.log
 *.csv
+backend/venv/
+backend/logs/
+*.pyc
 
 # --- C/C++ & Build Artifacts ---
 # Ignore object files and libraries
