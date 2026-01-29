@@ -1,0 +1,42 @@
+{
+  "TIMEOUT": {
+    "ui_title": "⚠️ 讀取超時",
+    "ui_message": "未偵測到標籤，請確認標籤是否平貼於感應區中心。",
+    "ui_color": "warning"
+  },
+  "TAG_ERR": {
+    "ui_title": "❌ 標籤異常",
+    "ui_message": "標籤無法通訊或已鎖定 (如 NT3H2111)，請更換標籤。",
+    "ui_color": "error"
+  },
+  "VERIFY_FAIL": {
+    "ui_title": "❌ 驗證失敗",
+    "ui_message": "寫入資料與讀取內容不一致，請嘗試重新寫入。",
+    "ui_color": "error"
+  },
+  "READ_ERR": {
+    "ui_title": "❌ 讀取錯誤",
+    "ui_message": "傳輸過程中斷，請保持標籤靜止並重試。",
+    "ui_color": "error"
+  },
+  "WRITE_ERR": {
+    "ui_title": "❌ 寫入錯誤",
+    "ui_message": "寫入失敗，標籤可能唯讀或距離過遠。",
+    "ui_color": "error"
+  },
+  "FORMAT_ERR": {
+    "ui_title": "❌ 格式化錯誤",
+    "ui_message": "標籤無法格式化為 NDEF。",
+    "ui_color": "error"
+  },
+  "SYSTEM_ERROR": {
+    "ui_title": "🔥 系統錯誤",
+    "ui_message": "後端服務異常，請聯繫工程師。",
+    "ui_color": "critical"
+  },
+  "BUSY": {
+    "ui_title": "⏳ 系統忙碌中",
+    "ui_message": "上一筆測試尚未結束，請稍候。",
+    "ui_color": "warning"
+  }
+}
