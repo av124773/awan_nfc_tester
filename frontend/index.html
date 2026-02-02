@@ -159,6 +159,39 @@
             animation: spin 1s linear infinite;
             margin: 20px auto;
         }
+        .error-container {
+            text-align: left;
+            margin-top: 10px;
+            background: #fff;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #f5c6cb;
+            font-size: 0.9rem;
+        }
+        
+        .error-line { m
+            argin: 5px 0; 
+        }
+        .label { f
+            ont-weight: bold; 
+            color: #555; 
+            display: inline-block; 
+            width: 80px; 
+        }
+        .val-exp { 
+            color: #155724; 
+            font-weight: bold; 
+            background: #d4edda; 
+            padding: 2px 5px; 
+            border-radius: 3px; 
+        }
+        .val-act { 
+            color: #721c24; 
+            font-weight: bold; 
+            background: #f8d7da; 
+            padding: 2px 5px; 
+            border-radius: 3px; 
+        }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
     </style>
@@ -214,6 +247,7 @@
 
         <hr>
         <button id="btn-end-session" class="btn btn-danger">結束本批次測試</button>
+        <button id="btn-back-setup" class="btn btn-secondary">更換批次 / 返回設定</button>
     </div>
 
     <div id="view-summary" class="view-section">

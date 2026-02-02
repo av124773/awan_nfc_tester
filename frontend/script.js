@@ -42,6 +42,7 @@ const buttons = {
     end: document.getElementById('btn-end-session'),
     download: document.getElementById('btn-download-csv'),
     newSession: document.getElementById('btn-new-session'),
+    backSetup: document.getElementById('btn-back-setup'), // [新增]
     // Modal Buttons
     modalConfirm: document.getElementById('btn-modal-confirm'),
     modalCancel: document.getElementById('btn-modal-cancel')
@@ -135,37 +136,51 @@ buttons.start.addEventListener('click', async () => {
         return;
     }
 
-    setUiBusy(true, "建立工單中...");
-    
-    // 這裡雖然 API 只需 work_order 和 operator，但我們把其他資訊存入前端 state
-    const res = await apiCall('/api/session/start', 'POST', {
-        work_order: workOrder,
-        operator: operator
-    });
+    // 定義啟動邏輯，方便重試
+    const doStart = async () => {
+        setUiBusy(true, "建立工單中...");
+        const res = await apiCall('/api/session/start', 'POST', {
+            work_order: workOrder,
+            operator: operator
+        });
+        setUiBusy(false);
 
-    setUiBusy(false);
+        if (res.status === 'OK') {
+            // 設定前端狀態
+            state.sessionId = res.session_id;
+            state.workOrder = workOrder;
+            state.operator = operator;
+            state.scannedCount = 0; // 新 Session 從 0 開始
+            state.targetCount = targetCountVal;
 
-    if (res.status === 'OK') {
-        state.sessionId = res.session_id;
-        state.workOrder = workOrder;
-        state.operator = operator;
-        state.scannedCount = 0;
-        state.targetCount = targetCountVal;
+            // 更新 UI
+            displays.sessionId.textContent = `Session: ${state.sessionId}`;
+            updateCountDisplay();
+            
+            // 重置測試區
+            inputs.barcode.value = '';
+            setStatus('IDLE', '請掃描條碼開始測試');
+            toggleActionButtons(false);
 
-        // 更新 UI
-        displays.sessionId.textContent = `Session: ${state.sessionId}`;
-        updateCountDisplay();
-        
-        // 重置測試區
-        inputs.barcode.value = '';
-        setStatus('IDLE', '請掃描條碼開始測試');
-        toggleActionButtons(false);
+            switchView('test');
+            inputs.barcode.focus();
+        } else if (res.error === 'SESSION_ACTIVE') {
+            // [關鍵修正]：如果後端說有 Session 在跑，詢問是否強制結束並重開
+            if (confirm("偵測到系統已有進行中的工單 Session！\n\n按「確定」：強制結束舊工單，並使用當前資訊開始新工單。\n按「取消」：恢復顯示舊工單畫面。")) {
+                // 強制結束舊的
+                await apiCall('/api/session/end', 'POST', {});
+                // 遞迴重試 (這會再次呼叫 start，這次應該就會成功了)
+                await doStart();
+            } else {
+                // 如果用戶選擇取消，則嘗試恢復舊 Session 畫面
+                checkAndResumeSession(); 
+            }
+        } else {
+            alert(`無法開始 Session: ${res.message || res.error}`);
+        }
+    };
 
-        switchView('test');
-        inputs.barcode.focus();
-    } else {
-        alert(`無法開始 Session: ${res.message || res.error}`);
-    }
+    await doStart();
 });
 
 function updateCountDisplay() {
@@ -220,18 +235,19 @@ function toggleActionButtons(enable) {
     }
 }
 
+// const tagData = "IG2 AWAN Test OK" 
+
 // C. 執行測試 (Write / Read->Verify)
 async function executeTest(action, allowDuplicate = false) {
     if (!state.currentBarcode) return;
 
-    // 定義預期寫入/驗證的資料內容
-    // 假設規則是 "PROD:" + Barcode (需與後端或業務邏輯一致)
-    const tagData = "PROD:" + state.currentBarcode; 
-
+    // 定義預期資料
+    const tagData = "IG2 AWAN Test OK"; 
     const actionText = action === 'write' ? "寫入初始化" : "讀取驗證";
+    
     setUiBusy(true, `正在${actionText}...`);
     
-    const endpoint = action === 'write' ? '/api/prod/write' : '/api/prod/read';
+    const endpoint = '/api/prod/' + (action === 'write' ? 'write' : 'read');
     
     const payload = {
         session_id: state.sessionId,
@@ -242,50 +258,88 @@ async function executeTest(action, allowDuplicate = false) {
     if (action === 'write') {
         payload.data = tagData;
     } else {
-        // Read 模式下，我們現在傳送 expected_data 進行 verify
+        // [修正] Read 模式下發送 expected_data 給後端進行 verify
         payload.expected_data = tagData;
     }
 
     const res = await apiCall(endpoint, 'POST', payload);
-
     setUiBusy(false);
 
-    // 處理重複掃碼警告
+    // 1. 處理重複掃碼警告
     if (res.error === 'DUPLICATE_SCAN' && res.ui) {
-        showWarningModal(res.ui, () => {
-            executeTest(action, true);
-        });
+        showWarningModal(res.ui, () => executeTest(action, true));
         return;
     }
 
-    // 處理結果顯示
-    if (res.status === 'PASS') {
-        // [新增] 顯示 Tag 內容資訊
-        const displayInfo = `PASS | UID: ${res.uid || 'OK'} | 內容: ${tagData}`;
-        setStatus('PASS', displayInfo);
+    // 2. 處理驗證失敗 (VERIFY_FAIL)
+    if (res.status === 'FAIL' && res.error === 'VERIFY_FAIL') {
+        // 解析 nfc_tool 回傳的 "Mismatch: Exp[A] Got[B]"
+        // Regex 說明: 尋找 Exp[...] 和 Got[...] 內的內容
+        const match = (res.msg || "").match(/Exp\[(.*?)\] Got\[(.*?)\]/);
         
-        state.scannedCount++;
-        updateCountDisplay();
-        
-        playSound('pass');
+        let errorHtml = '';
+        if (match) {
+            const expVal = match[1];
+            const actVal = match[2];
+            errorHtml = `
+                <div><strong>驗證失敗 (內容不符)</strong></div>
+                <div class="error-container">
+                    <div class="error-line"><span class="label">內容應為:</span> <span class="val-exp">${expVal}</span></div>
+                    <div class="error-line"><span class="label">實際讀取:</span> <span class="val-act">${actVal}</span></div>
+                </div>
+            `;
+        } else {
+            // 解析失敗或格式不同，顯示原始訊息
+            errorHtml = `<div><strong>驗證失敗</strong></div><div style="font-size:0.8rem">${res.msg}</div>`;
+        }
 
-        // [修正] Workstation Mode 邏輯
-        // 1. 不清空條碼，改為全選 (方便直接掃描下一片覆蓋)
-        inputs.barcode.focus();
-        inputs.barcode.select(); 
-        
-        // 2. 不禁能按鈕，允許對同一片重複操作 (例如先 Write 再 Verify)
-        // toggleActionButtons(false); // 移除這行
+        displays.status.innerHTML = errorHtml;
+        displays.status.className = 'status-fail'; // 紅色框
+        playSound('fail');
+        inputs.barcode.select();
+        return;
+    }
 
-    } else {
+    // 3. 處理其他失敗
+    if (res.status !== 'PASS') {
         const errMsg = (res.ui && res.ui.message) ? res.ui.message : (res.message || res.error);
         setStatus('FAIL', `FAIL: ${errMsg}`);
         playSound('fail');
-        
-        // 失敗同樣全選，方便重測
-        inputs.barcode.focus();
         inputs.barcode.select();
+        return;
     }
+
+    // 4. 成功 (PASS)
+    // 這裡我們信任後端 verify 通過，所以顯示預期值即可，或者顯示後端回傳的 uid
+    const displayInfo = `PASS | UID: ${res.uid || 'OK'} | 內容: ${tagData}`;
+    setStatus('PASS', displayInfo);
+    
+    state.scannedCount++;
+    updateCountDisplay();
+    playSound('pass');
+    inputs.barcode.focus();
+    inputs.barcode.select();
+}
+
+// --- 3. [新增] 返回設定按鈕邏輯 ---
+if (buttons.backSetup) {
+    buttons.backSetup.addEventListener('click', async () => {
+        // 跳出確認，避免誤觸
+        if (!confirm("確定要中斷目前測試並返回設定頁面嗎？\n(目前的 CSV 記錄將會封存)")) return;
+        
+        setUiBusy(true, "正在結束 Session...");
+        // 呼叫後端結束 Session
+        await apiCall('/api/session/end', 'POST', {});
+        setUiBusy(false);
+        
+        // 清空前端狀態
+        state.sessionId = null;
+        state.currentBarcode = null;
+        state.scannedCount = 0;
+        
+        // 切換回首頁
+        switchView('setup');
+    });
 }
 
 // 綁定測試按鈕事件
@@ -319,6 +373,41 @@ function showWarningModal(uiContent, onConfirm) {
         setStatus('IDLE', '操作已取消');
         inputs.barcode.focus();
     });
+}
+
+async function checkAndResumeSession() {
+    try {
+        const res = await apiCall('/api/session/current', 'GET');
+        
+        if (res.active) {
+            console.log("Resuming active session:", res);
+            
+            // 恢復 State
+            state.sessionId = res.session_id;
+            state.workOrder = res.work_order;
+            state.operator = res.operator;
+            state.scannedCount = res.scanned_count;
+            // 注意：targetCount 與 partNumber 後端沒有存(因為只是 setup 用)，
+            // 恢復時這些欄位會是空的或預設值，這在「恢復模式」下通常可接受，
+            // 若需嚴格一致，後端 SessionManager 也需儲存這些欄位。
+            
+            // 恢復 UI
+            inputs.workOrder.value = state.workOrder;
+            inputs.operator.value = state.operator;
+            
+            displays.sessionId.textContent = `Session: ${state.sessionId}`;
+            updateCountDisplay(); // 這裡會用恢復的 scannedCount 更新顯示
+            
+            setStatus('IDLE', '已恢復連線，請繼續掃描');
+            toggleActionButtons(false);
+            
+            // 直接切換到測試畫面
+            switchView('test');
+            inputs.barcode.focus();
+        }
+    } catch (e) {
+        console.error("Failed to check session status", e);
+    }
 }
 
 // E. 結束 Session
@@ -359,5 +448,6 @@ buttons.newSession.addEventListener('click', () => {
 // --- 初始化 ---
 // 確保頁面載入時游標在第一個輸入框
 window.onload = () => {
+    checkAndResumeSession();
     inputs.workOrder.focus();
 };

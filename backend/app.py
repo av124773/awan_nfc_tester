@@ -63,6 +63,13 @@ def kill_zombie_process():
     except: pass
 
 # --- 3. 業務邏輯層 ---
+class SessionStatusResponse(BaseModel):
+    active: bool
+    session_id: Optional[str] = None
+    work_order: Optional[str] = None
+    operator: Optional[str] = None
+    scanned_count: int = 0
+
 class SessionManager:
     def __init__(self):
         self.active: bool = False
@@ -91,6 +98,15 @@ class SessionManager:
         logger.info(f"Session Ended: {self.session_id}")
         self.active = False
         self.scanned_barcodes.clear()
+    
+    def get_status(self) -> dict:
+        return {
+            "active": self.active,
+            "session_id": self.session_id,
+            "work_order": self.work_order,
+            "operator": self.operator,
+            "scanned_count": len(self.scanned_barcodes)
+        }
 
     def _init_csv(self):
         header = ["Timestamp", "SessionID", "WorkOrder", "Operator", "Barcode", 
@@ -241,6 +257,11 @@ async def download_csv(session_id: Optional[str] = None):
         filename = os.path.basename(target_file)
         return FileResponse(path=target_file, filename=filename, media_type='text/csv')
     raise HTTPException(status_code=404, detail="CSV file not found")
+    
+@app.get("/api/session/current", response_model=SessionStatusResponse)
+async def get_current_session():
+    """獲取當前 Session 狀態 (用於前端重整後恢復狀態)"""
+    return session_mgr.get_status()
 
 @app.post("/api/prod/write")
 async def prod_write(req: ProdWriteRequest):
@@ -264,7 +285,7 @@ async def prod_read(req: ProdReadRequest):
         raise HTTPException(status_code=400, detail="Invalid Session")
     
     result = _driver_execute_nfc_tool(["verify", req.expected_data])
-    session_mgr.log_result(req.barcode, "READ", result)
+    session_mgr.log_result(req.barcode, "VERIFY", result)
     return result
 
 # Dev Routes
