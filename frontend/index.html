@@ -279,6 +279,39 @@
     </div>
 </div>
 
+<template id="tmpl-status-pass">
+    <div class="status-pass">
+        <div class="status-title">PASS</div>
+        <div class="status-uid">UID: <span data-field="uid"></span></div>
+        <div class="status-info">Data: <span data-field="actual"></span></div>
+    </div>
+</template>
+
+<template id="tmpl-error-verify">
+    <div class="error-box">
+        <div class="error-title">驗證失敗 (內容不符)</div>
+        <div class="error-container">
+            <div class="error-line">
+                <span class="label">預期 (Exp):</span> 
+                <span class="val-exp" data-field="expected"></span>
+            </div>
+            <div class="error-line">
+                <span class="label">實際 (Got):</span> 
+                <span class="val-act" data-field="actual"></span>
+            </div>
+        </div>
+        <div class="error-uid">UID: <span data-field="uid"></span></div>
+    </div>
+</template>
+
+<template id="tmpl-error-generic">
+    <div class="status-fail">
+        <div class="error-title">FAIL</div>
+        <div class="error-msg" data-field="msg"></div>
+        <div class="error-code">Code: <span data-field="error"></span></div>
+    </div>
+</template>
+
 <script src="script.js"></script>
 
 </body>

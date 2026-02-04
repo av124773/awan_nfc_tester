@@ -40,10 +40,16 @@ void onTagArrival(nfc_tag_info_t *pTagInfo) {
 
 void onTagDeparture(void) { }
 
-// --- Helpers ---
-void print_json_result(const char* status, const char* uid, const char* msg, const char* error_code) {
-    printf("__NFC_JSON_START__{\"status\": \"%s\", \"uid\": \"%s\", \"msg\": \"%s\", \"error\": \"%s\"}__NFC_JSON_END__\n",
-           status, uid ? uid : "", msg ? msg : "", error_code ? error_code : "");
+// --- Helpers (Updated for Structural JSON) ---
+void print_json_result(const char* status, const char* uid, const char* msg, const char* error_code, const char* expected, const char* actual) {
+    // 輸出結構化 JSON，前端不再需要 Regex 解析
+    printf("__NFC_JSON_START__{\"status\": \"%s\", \"uid\": \"%s\", \"msg\": \"%s\", \"error\": \"%s\", \"expected\": \"%s\", \"actual\": \"%s\"}__NFC_JSON_END__\n",
+           status, 
+           uid ? uid : "", 
+           msg ? msg : "", 
+           error_code ? error_code : "",
+           expected ? expected : "",
+           actual ? actual : "");
 }
 
 void get_uid_string(nfc_tag_info_t* tag, char* buffer) {
@@ -55,11 +61,10 @@ void get_uid_string(nfc_tag_info_t* tag, char* buffer) {
     }
 }
 
-// --- Logic (Aligned with DemoApp) ---
+// --- Logic ---
 
 int check_is_ndef_with_retry(unsigned int handle, ndef_info_t *info) {
     int max_retries = 3;
-    // DemoApp 並沒有重試，但保留一點容錯是好的
     for (int i = 0; i < max_retries; i++) {
         if (nfcTag_isNdef(handle, info) == 1) return 1;
         usleep(100 * 1000);
@@ -74,52 +79,53 @@ int perform_read_verify(unsigned int handle, char* out_uid) {
     nfc_friendly_type_t friendly_type = NDEF_FRIENDLY_TYPE_OTHER;
     ndef_info_t ndefInfo;
 
-    // 1. Check NDEF (比照 DemoApp 流程)
+    // 1. Check NDEF
     if (check_is_ndef_with_retry(handle, &ndefInfo) != 1) {
-        print_json_result("FAIL", out_uid, "Tag is not NDEF", "TAG_ERR");
+        print_json_result("FAIL", out_uid, "Tag is not NDEF", "TAG_ERR", NULL, NULL);
         return -1;
     }
 
     // 2. Read NDEF
     if (ndefInfo.current_ndef_length > sizeof(read_buf)) {
-        print_json_result("FAIL", out_uid, "NDEF too large", "SIZE_ERR");
+        print_json_result("FAIL", out_uid, "NDEF too large", "SIZE_ERR", NULL, NULL);
         return -1;
     }
     
-    // 如果長度為0，視為空標籤
+    // Empty Check
     if (ndefInfo.current_ndef_length == 0) {
          if (strlen(g_expect_data) > 0) {
-             print_json_result("FAIL", out_uid, "Empty Tag", "VERIFY_FAIL");
+             print_json_result("FAIL", out_uid, "Empty Tag", "VERIFY_FAIL", g_expect_data, "(Empty)");
              return -1;
          }
-         print_json_result("PASS", out_uid, "Empty", "NONE");
+         print_json_result("PASS", out_uid, "Empty", "NONE", NULL, NULL);
          return 0;
     }
 
     res = nfcTag_readNdef(handle, read_buf, ndefInfo.current_ndef_length, &friendly_type);
     if (res < 0) {
-        print_json_result("FAIL", out_uid, "Read failed", "READ_ERR");
+        print_json_result("FAIL", out_uid, "Read failed", "READ_ERR", NULL, NULL);
         return -1;
     }
 
     // 3. Parse & Verify
     if (ParseNDEFToString(read_buf, (unsigned int)res, parsed_str, sizeof(parsed_str)) != 0) {
-        print_json_result("FAIL", out_uid, "Parse error", "PARSE_ERR");
+        print_json_result("FAIL", out_uid, "Parse error", "PARSE_ERR", NULL, NULL);
         return -1;
     }
 
     if (strlen(g_expect_data) > 0) {
         if (strcmp(parsed_str, g_expect_data) == 0) {
-            print_json_result("PASS", out_uid, parsed_str, "NONE");
+            print_json_result("PASS", out_uid, parsed_str, "NONE", g_expect_data, parsed_str);
             return 0;
         } else {
             char err_msg[512];
             snprintf(err_msg, sizeof(err_msg), "Mismatch: Exp[%s] Got[%s]", g_expect_data, parsed_str);
-            print_json_result("FAIL", out_uid, err_msg, "VERIFY_FAIL");
+            // 這裡傳入關鍵的 expected 與 actual
+            print_json_result("FAIL", out_uid, err_msg, "VERIFY_FAIL", g_expect_data, parsed_str);
             return -1;
         }
     } else {
-        print_json_result("PASS", out_uid, parsed_str, "NONE");
+        print_json_result("PASS", out_uid, parsed_str, "NONE", NULL, parsed_str);
         return 0;
     }
 }
@@ -132,25 +138,22 @@ int perform_format_write(unsigned int handle, char* out_uid) {
     // Prepare Payload
     NdefType type = g_write_is_uri ? NDEF_TYPE_URI : NDEF_TYPE_TEXT;
     if (BuildNDEFBuffer(type, g_write_payload, ndef_buf, &ndef_len) != 0) {
-        print_json_result("FAIL", out_uid, "Build NDEF failed", "BUILD_ERR");
+        print_json_result("FAIL", out_uid, "Build NDEF failed", "BUILD_ERR", NULL, NULL);
         return -1;
     }
 
-    // Format Logic (DemoApp Style)
-    // DemoApp logic: if (!isFormatable) check isNdef. 
-    // Simplified: Just try to write first if it's NDEF, if not try format.
-    
+    // Format Logic
     ndef_info_t info;
     int is_ndef = nfcTag_isNdef(handle, &info);
     
     if (!is_ndef) {
         if (nfcTag_isFormatable(handle)) {
             if (nfcTag_formatTag(handle) != 0) {
-                print_json_result("FAIL", out_uid, "Format failed", "FORMAT_ERR");
+                print_json_result("FAIL", out_uid, "Format failed", "FORMAT_ERR", NULL, NULL);
                 return -1;
             }
         } else {
-            print_json_result("FAIL", out_uid, "Tag not writable", "TAG_ERR");
+            print_json_result("FAIL", out_uid, "Tag not writable", "TAG_ERR", NULL, NULL);
             return -1;
         }
     }
@@ -158,12 +161,12 @@ int perform_format_write(unsigned int handle, char* out_uid) {
     // Write
     res = nfcTag_writeNdef(handle, ndef_buf, (unsigned int)ndef_len);
     if (res != 0) {
-        print_json_result("FAIL", out_uid, "Write failed", "WRITE_ERR");
+        print_json_result("FAIL", out_uid, "Write failed", "WRITE_ERR", NULL, NULL);
         return -1;
     }
 
     // Read Back Verify
-    usleep(50 * 1000); // Small delay
+    usleep(50 * 1000); 
     strncpy(g_expect_data, g_write_payload, sizeof(g_expect_data));
     return perform_read_verify(handle, out_uid);
 }
@@ -196,7 +199,7 @@ int main(int argc, char *argv[]) {
     InitializeLogLevel();
 
     if (doInitialize() != 0) {
-        print_json_result("FAIL", "", "NFC Init failed", "INIT_ERR");
+        print_json_result("FAIL", "", "NFC Init failed", "INIT_ERR", NULL, NULL);
         return 1;
     }
 
@@ -220,14 +223,11 @@ int main(int argc, char *argv[]) {
     pthread_mutex_unlock(&g_ctx.mutex);
 
     if (wait_res == ETIMEDOUT) {
-        print_json_result("FAIL", "", "Timeout", "TIMEOUT");
+        print_json_result("FAIL", "", "Timeout", "TIMEOUT", NULL, NULL);
     } 
     else if (g_ctx.state == 1) {
         char uid_str[32];
         get_uid_string(&g_ctx.tagInfo, uid_str);
-        
-        // CORRECTION: DO NOT DISABLE DISCOVERY HERE!
-        // DemoApp keeps discovery active during read/write.
         
         if (g_mode == OP_MODE_FORMAT_WRITE) {
             perform_format_write(g_ctx.tagInfo.handle, uid_str);
@@ -236,8 +236,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Cleanup Phase (Disable Discovery ONLY at the end)
-    disableDiscovery(); // Use disableDiscovery() not doDisableDiscovery() as per DemoApp
+    disableDiscovery();
     deregisterTagCallback();
     doDeinitialize();
     

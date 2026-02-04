@@ -122,6 +122,28 @@ async function apiCall(endpoint, method = 'POST', body = null) {
     }
 }
 
+// [新增 Helper] 通用模板渲染函式
+function renderTemplate(templateId, data) {
+    const template = document.getElementById(templateId);
+    if (!template) {
+        console.error(`Template ${templateId} not found`);
+        return document.createElement('div');
+    }
+    
+    // 複製節點 (Deep Clone)
+    const clone = template.content.cloneNode(true);
+    
+    // 自動填充 data-field
+    Object.keys(data).forEach(key => {
+        const el = clone.querySelector(`[data-field="${key}"]`);
+        if (el) {
+            el.textContent = data[key];
+        }
+    });
+    
+    return clone;
+}
+
 // --- 4. 核心邏輯 (Core Logic) ---
 
 // A. 開始 Session
@@ -241,7 +263,6 @@ function toggleActionButtons(enable) {
 async function executeTest(action, allowDuplicate = false) {
     if (!state.currentBarcode) return;
 
-    // 定義預期資料
     const tagData = "IG2 AWAN Test OK"; 
     const actionText = action === 'write' ? "寫入初始化" : "讀取驗證";
     
@@ -258,67 +279,72 @@ async function executeTest(action, allowDuplicate = false) {
     if (action === 'write') {
         payload.data = tagData;
     } else {
-        // [修正] Read 模式下發送 expected_data 給後端進行 verify
         payload.expected_data = tagData;
     }
 
+    // 呼叫 API
     const res = await apiCall(endpoint, 'POST', payload);
     setUiBusy(false);
 
-    // 1. 處理重複掃碼警告
+    // --- 修改開始 ---
+
+    // 0. 每次顯示結果前，先清空狀態區塊
+    displays.status.innerHTML = ''; 
+    displays.status.className = ''; // 重置樣式 class
+
+    // 1. 處理重複掃碼警告 (維持不變)
     if (res.error === 'DUPLICATE_SCAN' && res.ui) {
         showWarningModal(res.ui, () => executeTest(action, true));
         return;
     }
 
-    // 2. 處理驗證失敗 (VERIFY_FAIL)
-    if (res.status === 'FAIL' && res.error === 'VERIFY_FAIL') {
-        // 解析 nfc_tool 回傳的 "Mismatch: Exp[A] Got[B]"
-        // Regex 說明: 尋找 Exp[...] 和 Got[...] 內的內容
-        const match = (res.msg || "").match(/Exp\[(.*?)\] Got\[(.*?)\]/);
+    // 2. 判斷結果類型
+    if (res.status === 'PASS') {
+        // [改進點 A] 成功狀態：使用 tmpl-status-pass 模板
+        // 後端現在直接回傳 uid，我們傳入模板
+        const content = renderTemplate('tmpl-status-pass', {
+            uid: res.uid || 'N/A',
+            actual: tagData // 或是 res.actual
+        });
         
-        let errorHtml = '';
-        if (match) {
-            const expVal = match[1];
-            const actVal = match[2];
-            errorHtml = `
-                <div><strong>驗證失敗 (內容不符)</strong></div>
-                <div class="error-container">
-                    <div class="error-line"><span class="label">內容應為:</span> <span class="val-exp">${expVal}</span></div>
-                    <div class="error-line"><span class="label">實際讀取:</span> <span class="val-act">${actVal}</span></div>
-                </div>
-            `;
+        displays.status.classList.add('status-container', 'pass'); // 設定綠色容器樣式
+        displays.status.appendChild(content); // 將模板內容加入畫面
+        
+        // 後續動作 (計數、音效)
+        state.scannedCount++;
+        updateCountDisplay();
+        playSound('pass');
+        inputs.barcode.focus();
+        inputs.barcode.select();
+
+    } else {
+        // 失敗狀態
+        displays.status.classList.add('status-container', 'fail'); // 設定紅色容器樣式
+
+        if (res.error === 'VERIFY_FAIL') {
+            // [改進點 B] 驗證失敗：使用 tmpl-error-verify 模板
+            // 不再使用 Regex 解析字串，直接讀取 JSON 欄位
+            const content = renderTemplate('tmpl-error-verify', {
+                uid: res.uid || 'Unknown',
+                expected: res.expected || '?', // 從 C 的 JSON 直接取得
+                actual: res.actual || '?'      // 從 C 的 JSON 直接取得
+            });
+            displays.status.appendChild(content);
+
         } else {
-            // 解析失敗或格式不同，顯示原始訊息
-            errorHtml = `<div><strong>驗證失敗</strong></div><div style="font-size:0.8rem">${res.msg}</div>`;
+            // [改進點 C] 其他一般錯誤：使用 tmpl-error-generic 模板
+            // 處理如 Timeout, Tag Lost 等錯誤
+            const content = renderTemplate('tmpl-error-generic', {
+                msg: res.msg || 'Unknown Error',
+                error: res.error || 'ERR'
+            });
+            displays.status.appendChild(content);
         }
 
-        displays.status.innerHTML = errorHtml;
-        displays.status.className = 'status-fail'; // 紅色框
         playSound('fail');
         inputs.barcode.select();
-        return;
     }
-
-    // 3. 處理其他失敗
-    if (res.status !== 'PASS') {
-        const errMsg = (res.ui && res.ui.message) ? res.ui.message : (res.message || res.error);
-        setStatus('FAIL', `FAIL: ${errMsg}`);
-        playSound('fail');
-        inputs.barcode.select();
-        return;
-    }
-
-    // 4. 成功 (PASS)
-    // 這裡我們信任後端 verify 通過，所以顯示預期值即可，或者顯示後端回傳的 uid
-    const displayInfo = `PASS | UID: ${res.uid || 'OK'} | 內容: ${tagData}`;
-    setStatus('PASS', displayInfo);
-    
-    state.scannedCount++;
-    updateCountDisplay();
-    playSound('pass');
-    inputs.barcode.focus();
-    inputs.barcode.select();
+    // --- 修改結束 ---
 }
 
 // --- 3. [新增] 返回設定按鈕邏輯 ---
