@@ -1,6 +1,8 @@
 #!/bin/bash
 cd "$(dirname "$0")"
 
+lsof -t -i:8000 | xargs -r kill -9
+
 # 檢查是否需要編譯 C 程式
 if [ ! -f "../nfc_tool" ]; then
     echo "[INFO] Compiling nfc_tool..."
