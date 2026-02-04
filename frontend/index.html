@@ -192,6 +192,89 @@
             padding: 2px 5px; 
             border-radius: 3px; 
         }
+        /* --- [新增] 結果顯示卡片樣式 (Result Templates) --- */
+        .result-card {
+            background: #fff;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            width: 100%;
+            text-align: left; /* 內容靠左讀取較自然 */
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateY(-10px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        /* 成功狀態 */
+        .result-card.pass {
+            border-left: 10px solid var(--success);
+            background-color: #f0fdf4; /* 極淡綠色背景 */
+        }
+        .result-card.pass .status-header { color: var(--success); }
+
+        /* 失敗狀態 */
+        .result-card.fail {
+            border-left: 10px solid var(--danger);
+            background-color: #fef2f2; /* 極淡紅色背景 */
+        }
+        .result-card.fail .status-header { color: var(--danger); }
+
+        /* 標題區域 */
+        .status-header {
+            font-size: 2rem;
+            font-weight: 900;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 2px solid rgba(0,0,0,0.05);
+            padding-bottom: 10px;
+        }
+
+        /* 數據細節行 */
+        .detail-row {
+            display: flex;
+            margin-bottom: 8px;
+            font-size: 1.1rem;
+            align-items: baseline;
+        }
+        .detail-label {
+            font-weight: bold;
+            color: #555;
+            width: 100px; /* 固定寬度讓冒號對齊 */
+            flex-shrink: 0;
+        }
+        .detail-value {
+            font-family: 'Consolas', 'Monaco', monospace; /* 等寬字體方便核對 */
+            color: #333;
+            word-break: break-all;
+        }
+
+        /* 驗證失敗專用對比區 */
+        .comparison-box {
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            margin-top: 10px;
+        }
+        .diff-highlight {
+            color: #dc3545;
+            background: #ffe6e6;
+            padding: 2px 4px;
+            border-radius: 2px;
+            font-weight: bold;
+        }
+        .success-highlight {
+            color: #155724;
+            background: #d4edda;
+            padding: 2px 4px;
+            border-radius: 2px;
+            font-weight: bold;
+        }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
     </style>
@@ -280,35 +363,67 @@
 </div>
 
 <template id="tmpl-status-pass">
-    <div class="status-pass">
-        <div class="status-title">PASS</div>
-        <div class="status-uid">UID: <span data-field="uid"></span></div>
-        <div class="status-info">Data: <span data-field="actual"></span></div>
+    <div class="result-card pass">
+        <div class="status-header">
+            <span>測試通過 PASS</span>
+            <span style="font-size: 3rem;">✔</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">UID (卡號):</span>
+            <span class="detail-value" data-field="uid" style="font-weight: bold;"></span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">寫入資料:</span>
+            <span class="detail-value" data-field="actual"></span>
+        </div>
     </div>
 </template>
 
 <template id="tmpl-error-verify">
-    <div class="error-box">
-        <div class="error-title">驗證失敗 (內容不符)</div>
-        <div class="error-container">
-            <div class="error-line">
-                <span class="label">預期 (Exp):</span> 
-                <span class="val-exp" data-field="expected"></span>
+    <div class="result-card fail">
+        <div class="status-header">
+            <span>比對失敗 FAIL</span>
+            <span style="font-size: 3rem;">✖</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">錯誤類型:</span>
+            <span class="detail-value" style="color: var(--danger); font-weight: bold;">資料驗證不符 (Verify Failed)</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">UID (卡號):</span>
+            <span class="detail-value" data-field="uid"></span>
+        </div>
+        
+        <div class="comparison-box">
+            <div class="detail-row">
+                <span class="detail-label">預期 (Exp):</span>
+                <span class="detail-value success-highlight" data-field="expected"></span>
             </div>
-            <div class="error-line">
-                <span class="label">實際 (Got):</span> 
-                <span class="val-act" data-field="actual"></span>
+            <div class="detail-row" style="margin-top: 5px; padding-top:5px; border-top:1px dashed #eee;">
+                <span class="detail-label">實際 (Got):</span>
+                <span class="detail-value diff-highlight" data-field="actual"></span>
             </div>
         </div>
-        <div class="error-uid">UID: <span data-field="uid"></span></div>
     </div>
 </template>
 
 <template id="tmpl-error-generic">
-    <div class="status-fail">
-        <div class="error-title">FAIL</div>
-        <div class="error-msg" data-field="msg"></div>
-        <div class="error-code">Code: <span data-field="error"></span></div>
+    <div class="result-card fail">
+        <div class="status-header">
+            <span>執行錯誤 ERROR</span>
+            <span style="font-size: 3rem;">⚠</span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">錯誤訊息:</span>
+            <span class="detail-value" data-field="msg"></span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">錯誤代碼:</span>
+            <span class="detail-value diff-highlight" data-field="error"></span>
+        </div>
+        <div style="margin-top: 15px; font-size: 0.9rem; color: #666;">
+            請檢查：1. 標籤是否移開  2. 讀卡機連線
+        </div>
     </div>
 </template>
 
