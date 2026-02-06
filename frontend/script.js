@@ -99,6 +99,37 @@ const App = {
             c.appendChild(div);
         });
     },
+    
+    // 統一的 UI 渲染入口
+    renderStatus(type, content = null) {
+        const el = this.dom.displays.status;
+        if (!el) return;
+
+        // 1. 清空舊內容
+        el.innerHTML = ''; 
+        
+        // 2. 重置並設定新的狀態 Class (解耦關鍵：只操作 class 名稱)
+        el.className = ''; // 清除所有舊 class
+        
+        switch (type) {
+            case 'IDLE':
+                el.classList.add('state-idle');
+                el.textContent = content || '等待掃描...';
+                break;
+            case 'WARN':
+                el.classList.add('state-warn');
+                el.textContent = content || '警告';
+                break;
+            case 'PASS':
+                el.classList.add('state-pass');
+                if (content) el.appendChild(content); // 插入 Template DOM
+                break;
+            case 'FAIL':
+                el.classList.add('state-fail');
+                if (content) el.appendChild(content); // 插入 Template DOM
+                break;
+        }
+    },
 
     async handleStartSession() {
         const payload = {};
@@ -179,6 +210,17 @@ const App = {
             session_id: this.state.sessionId, barcode: code
         });
         if (res.status === 'OK') {
+            this.renderStatus('IDLE', `條碼: ${code} (就緒)`); // 使用 IDLE 樣式顯示文字
+            this.toggleActionButtons(true);
+        } else if (res.error === 'DUPLICATE_SCAN') {
+            this.renderStatus('WARN', `警告: 條碼 ${code} 重複`); // 使用 WARN 樣式
+            this.toggleActionButtons(true);
+        } else {
+            this.renderStatus('FAIL', document.createTextNode(`錯誤: ${res.message}`)); // 或直接傳字串
+            this.toggleActionButtons(false);
+        }
+        /*
+        if (res.status === 'OK') {
             this.setStatus('IDLE', `條碼: ${code} (就緒)`);
             this.toggleActionButtons(true);
         } else if (res.error === 'DUPLICATE_SCAN') {
@@ -188,6 +230,7 @@ const App = {
             this.setStatus('FAIL', `錯誤: ${res.message}`);
             this.toggleActionButtons(false);
         }
+        */
     },
 
     async executeTest(action, allowDuplicate = false) {
@@ -202,7 +245,50 @@ const App = {
         };
         if (action === 'write') payload.data = "IG2 AWAN Test OK";
         else payload.expected_data = "IG2 AWAN Test OK";
+        
+        const res = await this.apiCall(endpoint, 'POST', payload);
+        this.setUiBusy(false);
 
+        // 重複掃描處理
+        if (res.error === 'DUPLICATE_SCAN' && res.ui) {
+            this.showWarningModal(res.ui, () => this.executeTest(action, true));
+            // 恢復原狀
+            this.renderStatus('IDLE', '等待操作...'); 
+            return;
+        }
+
+        // 根據結果呼叫渲染層
+        if (res.status === 'PASS') {
+            // 1. 準備資料
+            const tmpl = this.renderTemplate('tmpl-status-pass', {
+                uid: res.uid || 'N/A',
+                actual: "IG2 AWAN Test OK"
+            });
+            
+            // 2. 更新 UI 狀態
+            this.renderStatus('PASS', tmpl);
+            
+            this.state.scannedCount++;
+            if (this.dom.inputs.barcode) {
+                this.dom.inputs.barcode.focus();
+                this.dom.inputs.barcode.select();
+            }
+        } else {
+            const isVerify = (res.error === 'VERIFY_FAIL');
+            const tmplName = isVerify ? 'tmpl-error-verify' : 'tmpl-error-generic';
+            const data = isVerify ? 
+                { uid: res.uid, expected: res.expected, actual: res.actual } : 
+                { msg: res.msg || 'Error', error: res.error };
+            
+            const tmpl = this.renderTemplate(tmplName, data);
+            
+            // 更新 UI 狀態
+            this.renderStatus('FAIL', tmpl);
+            
+            if (this.dom.inputs.barcode) this.dom.inputs.barcode.select();
+        }
+    },
+/*
         const res = await this.apiCall(endpoint, 'POST', payload);
         this.setUiBusy(false);
 
@@ -229,6 +315,7 @@ const App = {
             if(this.dom.inputs.barcode) this.dom.inputs.barcode.select();
         }
     },
+    * */
 
     // --- Utility ---
 

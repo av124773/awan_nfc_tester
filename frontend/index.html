@@ -86,17 +86,63 @@
         .btn-end { font-size: 1.3rem; padding: 1.2rem; background-color: #dc3545; }
         .btn-change { font-size: 1.1rem; background-color: #6c757d; }
 
-        /* --- 狀態框 --- */
+        /* --- 狀態顯示容器 (Container) --- */
         #status-display {
-            min-height: 150px; display: flex; align-items: center; justify-content: center;
-            margin: 1.5rem 0; padding: 1rem; background-color: #f8f9fa;
-            border: 3px dashed #dee2e6; border-radius: 12px;
-            font-size: 1.5rem; font-weight: bold; color: #6c757d;
-            box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
+            /* 基礎結構 */
+            min-height: 160px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 1.5rem 0;
+            padding: 1.5rem;
+            border-radius: 12px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            transition: all 0.3s ease;
         }
-        /* 結果卡片樣式 */
+
+        /* --- 狀態定義 (State Variants) --- */
+        
+        /* 狀態 1: 閒置/等待 (預設) */
+        #status-display.state-idle {
+            background-color: #f8f9fa;
+            border: 3px dashed #dee2e6;
+            color: #6c757d;
+        }
+
+        /* 狀態 2: 處理中/警告 */
+        #status-display.state-warn {
+            background-color: #fff3cd;
+            border: 3px solid #ffc107;
+            color: #856404;
+        }
+
+        /* 狀態 3: 通過 (PASS) */
+        #status-display.state-pass {
+            background-color: #d1fae5;
+            border: 3px solid #10b981;
+            color: #065f46;
+            box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.2);
+        }
+
+        /* 狀態 4: 失敗 (FAIL) */
+        #status-display.state-fail {
+            background-color: #fee2e2;
+            border: 3px solid #ef4444;
+            color: #7f1d1d;
+            box-shadow: 0 10px 15px -3px rgba(239, 68, 68, 0.2);
+        }
+
+        /* --- 內部卡片微調 --- */
+        /* 讓卡片背景透明，融入容器背景 */
         .res-card { width: 100%; text-align: left; }
-        .res-header { font-size: 2.2rem; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid rgba(0,0,0,0.1); padding-bottom: 5px; }
+        .res-header { 
+            font-size: 2.5rem; 
+            margin-bottom: 15px; 
+            display: flex; justify-content: space-between; align-items: center; 
+            border-bottom: 2px solid rgba(0,0,0,0.1); 
+            padding-bottom: 10px; 
+        }
         .res-row { font-size: 1.2rem; margin: 5px 0; }
         .res-mono { font-family: monospace; font-weight: bold; background: rgba(255,255,255,0.5); padding: 2px 6px; border-radius: 4px; }
         
