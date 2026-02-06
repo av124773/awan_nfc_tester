@@ -1,0 +1,40 @@
+{
+  "station_name": "NFC_TEST_STATION_01",
+  "csv_fields": [
+    {
+      "key": "work_order",
+      "label": "工單號碼 (Work Order)",
+      "type": "text",
+      "required": true,
+      "default": ""
+    },
+    {
+      "key": "part_number",
+      "label": "產品料號 (Part Number)",
+      "type": "text",
+      "required": true,
+      "default": ""
+    },
+    {
+      "key": "operator_id",
+      "label": "操作員 ID (Operator)",
+      "type": "text",
+      "required": true,
+      "default": ""
+    },
+    {
+      "key": "target_qty",
+      "label": "批次數量 (Batch Qty)",
+      "type": "number",
+      "required": false,
+      "default": 100
+    },
+    {
+      "key": "test_1",
+      "label": "test_number_1",
+      "type": "number",
+      "required": false,
+      "default": ""
+    }
+  ]
+}
