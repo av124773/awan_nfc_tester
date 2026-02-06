@@ -219,18 +219,6 @@ const App = {
             this.renderStatus('FAIL', document.createTextNode(`錯誤: ${res.message}`)); // 或直接傳字串
             this.toggleActionButtons(false);
         }
-        /*
-        if (res.status === 'OK') {
-            this.setStatus('IDLE', `條碼: ${code} (就緒)`);
-            this.toggleActionButtons(true);
-        } else if (res.error === 'DUPLICATE_SCAN') {
-            this.setStatus('WARN', `警告: 條碼 ${code} 重複`);
-            this.toggleActionButtons(true);
-        } else {
-            this.setStatus('FAIL', `錯誤: ${res.message}`);
-            this.toggleActionButtons(false);
-        }
-        */
     },
 
     async executeTest(action, allowDuplicate = false) {
@@ -288,34 +276,6 @@ const App = {
             if (this.dom.inputs.barcode) this.dom.inputs.barcode.select();
         }
     },
-/*
-        const res = await this.apiCall(endpoint, 'POST', payload);
-        this.setUiBusy(false);
-
-        const box = this.dom.displays.status;
-        if (box) { box.innerHTML = ''; box.className = ''; box.removeAttribute('id'); }
-
-        if (res.error === 'DUPLICATE_SCAN' && res.ui) {
-            this.showWarningModal(res.ui, () => this.executeTest(action, true));
-            if(box) box.id = 'status-display';
-            return;
-        }
-
-        if (res.status === 'PASS') {
-            const tmpl = this.renderTemplate('tmpl-status-pass', { uid: res.uid || 'N/A', actual: "IG2 AWAN Test OK" });
-            if (box) box.appendChild(tmpl);
-            this.state.scannedCount++;
-            if(this.dom.inputs.barcode) { this.dom.inputs.barcode.focus(); this.dom.inputs.barcode.select(); }
-        } else {
-            const isVerify = (res.error === 'VERIFY_FAIL');
-            const tmplName = isVerify ? 'tmpl-error-verify' : 'tmpl-error-generic';
-            const data = isVerify ? { uid: res.uid, expected: res.expected, actual: res.actual } : { msg: res.msg || 'Error', error: res.error };
-            const tmpl = this.renderTemplate(tmplName, data);
-            if (box) box.appendChild(tmpl);
-            if(this.dom.inputs.barcode) this.dom.inputs.barcode.select();
-        }
-    },
-    * */
 
     // --- Utility ---
 
