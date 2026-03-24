@@ -35,6 +35,13 @@
       "type": "number",
       "required": false,
       "default": ""
+    },
+    {
+      "key": "AAA",
+      "label": "BBB",
+      "type": "number",
+      "required": false,
+      "default": "預設內容"
     }
   ]
 }

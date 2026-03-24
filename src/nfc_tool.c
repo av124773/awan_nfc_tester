@@ -144,7 +144,7 @@ int perform_format_write(unsigned int handle, char* out_uid) {
 
     // Format Logic
     ndef_info_t info;
-    int is_ndef = nfcTag_isNdef(handle, &info);
+    int is_ndef = check_is_ndef_with_retry(handle, &info);
     
     if (!is_ndef) {
         if (nfcTag_isFormatable(handle)) {
