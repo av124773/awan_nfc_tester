@@ -5,6 +5,7 @@ import subprocess
 import threading
 import csv
 import re
+import time
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from contextlib import asynccontextmanager
@@ -180,10 +181,17 @@ def _driver_execute_nfc_tool(args: list) -> dict:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=NFC_TIMEOUT_SEC)
         match = re.search(r'__NFC_JSON_START__(\{.*?\})__NFC_JSON_END__', result.stdout.strip())
         if match:
-            parsed = json.loads(match.group(1))
-            err = parsed.get("error", "NONE")
-            if err in error_mapping_cache: parsed["ui"] = error_mapping_cache[err]
-            return parsed
+            parsed_data = json.loads(match.group(1))
+            
+            if parsed_data.get("status") == "RETRY":
+                #time.sleep(0.3)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=NFC_TIMEOUT_SEC)
+                match = re.search(r'__NFC_JSON_START__(\{.*?\})__NFC_JSON_END__', result.stdout.strip())
+                if match:
+                    parsed_data = json.loads(match.group(1))
+            if parsed_data.get("status") == "FAIL":
+                parsed_data["ui"] = error_mapping_cache.get(parsed_data.get("error"), parsed_data.get("msg"))
+            return parsed_data
         else:
             return {"status": "FAIL", "error": "SYSTEM_ERROR", "msg": f"Raw Output: {result.stdout[:50]}"}
     except subprocess.TimeoutExpired:

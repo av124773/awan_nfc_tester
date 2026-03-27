@@ -147,14 +147,61 @@ int perform_format_write(unsigned int handle, char* out_uid) {
     int is_ndef = check_is_ndef_with_retry(handle, &info);
     
     if (!is_ndef) {
-        if (nfcTag_isFormatable(handle)) {
-            if (nfcTag_formatTag(handle) != 0) {
-                print_json_result("FAIL", out_uid, "Format failed", "FORMAT_ERR", NULL, NULL);
+        // 嘗試標準格式化
+        if (nfcTag_formatTag(handle) != 0) {
+            printf("Standard format failed, attempting Dynamic Raw T2T formatting...\n");
+            
+            unsigned char get_ver_cmd[] = { 0x60 }; // NXP GET_VERSION 指令
+            unsigned char resp[256];
+            int actual_rx_len = 0;                  // 接收實際回傳長度
+            unsigned char cc_mem_size = 0x00;
+
+            // 步驟 A: 偵測晶片真實型號與容量
+            // 將第5個參數直接傳入緩衝區大小 sizeof(resp)
+            // 將回傳值指派給 actual_rx_len 以取得實際收到的長度
+            actual_rx_len = nfcTag_transceive(handle, get_ver_cmd, sizeof(get_ver_cmd), resp, sizeof(resp), 500);
+            
+            // 回傳值大於 0 表示收發成功且有資料
+            if (actual_rx_len > 0) {
+                // 驗證是否為 NXP 晶片 (Vendor ID == 0x04) 且回應長度正確 (8 bytes)
+                if (actual_rx_len == 8 && resp[1] == 0x04) {
+                    // 根據 Storage Size (Byte 6) 判斷晶片型號
+                    switch (resp[6]) {
+                        case 0x0F: cc_mem_size = 0x12; break; // NTAG213
+                        case 0x11: cc_mem_size = 0x3F; break; // NTAG215
+                        case 0x13: cc_mem_size = 0x6D; break; // NTAG216 / NT3H2111 1K
+                        default:   cc_mem_size = 0x00; break; // 未知容量
+                    }
+                }
+            }
+
+            // 步驟 B: 安全性阻擋
+            if (cc_mem_size == 0x00) {
+                print_json_result("FAIL", out_uid, "Unknown Tag Type for Raw Format", "FORMAT_ERR", NULL, NULL);
                 return -1;
             }
-        } else {
-            print_json_result("FAIL", out_uid, "Tag not writable", "TAG_ERR", NULL, NULL);
-            return -1;
+
+            // 步驟 C: 根據動態獲取的容量建構 CC 區塊並寫入
+            unsigned char write_page3_cmd[] = { 0xA2, 0x03, 0xE1, 0x10, cc_mem_size, 0x00 };
+            unsigned char write_page4_cmd[] = { 0xA2, 0x04, 0x03, 0x00, 0xFE, 0x00 }; 
+            
+            // 寫入指令只需判斷是否 >= 0 (無錯誤)
+            if (nfcTag_transceive(handle, write_page3_cmd, sizeof(write_page3_cmd), resp, sizeof(resp), 500) < 0) {
+                print_json_result("FAIL", out_uid, "Raw format Page 3 failed", "FORMAT_ERR", NULL, NULL);
+                return -1;
+            }
+            usleep(10 * 1000); 
+
+            if (nfcTag_transceive(handle, write_page4_cmd, sizeof(write_page4_cmd), resp, sizeof(resp), 500) < 0) {
+                print_json_result("FAIL", out_uid, "Raw format Page 4 failed", "FORMAT_ERR", NULL, NULL);
+                return -1;
+            }
+            usleep(10 * 1000);
+            
+            printf("Dynamic Raw formatting successful, proceeding to standard NDEF write...\n");
+            
+            print_json_result("RETRY", out_uid, "Format complete. Auto-retrying write...", "FORMAT_RETRY", NULL, NULL);
+            return 0;
         }
     }
 
