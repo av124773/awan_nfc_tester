@@ -212,12 +212,57 @@ const App = {
         if (res.status === 'OK') {
             this.renderStatus('IDLE', `條碼: ${code} (就緒)`); // 使用 IDLE 樣式顯示文字
             this.toggleActionButtons(true);
+            this.executeAutoTest();
         } else if (res.error === 'DUPLICATE_SCAN') {
             this.renderStatus('WARN', `警告: 條碼 ${code} 重複`); // 使用 WARN 樣式
             this.toggleActionButtons(true);
         } else {
             this.renderStatus('FAIL', document.createTextNode(`錯誤: ${res.message}`)); // 或直接傳字串
             this.toggleActionButtons(false);
+        }
+    },
+    
+    async executeAutoTest(allowDuplicate = false) {
+        if (!this.state.currentBarcode) return;
+        
+        this.setUiBusy(true, "Auto Test (1/2): writing ...");
+        const writePayload = {
+            session_id: this.state.sessionId,
+            barcode: this.state.currentBarcode,
+            allow_duplicate: allowDuplicate,
+            data: "IG2 AWAN Test OK"
+        };
+        const writeRes = await this.apiCall('/api/prod/write', 'POST', writePayload);
+
+        // 重複掃描處理
+        if (writeRes.error === 'DUPLICATE_SCAN' && writeRes.ui) {
+            this.setUiBusy(false);
+            this.showWarningModal(writeRes.ui, () => this.executeAutoTest(true));
+            // 恢復原狀
+            this.renderStatus('IDLE', '等待操作...'); 
+            return;
+        }
+        
+        if (writeRes.status === 'FAIL') {
+            this.setUiBusy(false);
+            this.handleTestFail(writeRes);
+            reutrn;
+        }
+
+        this.setUiBusy(true, "Auto Test (2/2): reading...");
+        const readPayload = {
+            session_id: this.state.sessionId,
+            barcode: this.state.currentBarcode,
+            allow_duplicate: allowDuplicate,
+            expected_data: "IG2 AWAN Test OK"
+        };
+        const readRes = await this.apiCall('/api/prod/read', 'POST', readPayload);
+        this.setUiBusy(false);
+        
+        if (readRes.status === 'PASS') {
+            this.handleTestAllPass(readRes);
+        } else {
+            this.handleTestFail(readRes);
         }
     },
 
@@ -247,37 +292,62 @@ const App = {
 
         // 根據結果呼叫渲染層
         if (res.status === 'PASS') {
-            // 1. 準備資料
-            const tmpl = this.renderTemplate('tmpl-status-pass', {
-                uid: res.uid || 'N/A',
-                actual: "IG2 AWAN Test OK"
-            });
-            
-            // 2. 更新 UI 狀態
-            this.renderStatus('PASS', tmpl);
-            
-            this.state.scannedCount++;
-            if (this.dom.inputs.barcode) {
-                this.dom.inputs.barcode.focus();
-                this.dom.inputs.barcode.select();
-            }
+            this.handleTestPass(res);
         } else {
-            const isVerify = (res.error === 'VERIFY_FAIL');
-            const tmplName = isVerify ? 'tmpl-error-verify' : 'tmpl-error-generic';
-            const data = isVerify ? 
-                { uid: res.uid, expected: res.expected, actual: res.actual } : 
-                { msg: res.msg || 'Error', error: res.error };
-            
-            const tmpl = this.renderTemplate(tmplName, data);
-            
-            // 更新 UI 狀態
-            this.renderStatus('FAIL', tmpl);
-            
-            if (this.dom.inputs.barcode) this.dom.inputs.barcode.select();
+            this.handleTestFail(res)
         }
     },
 
     // --- Utility ---
+    
+    handleTestPass(res) {
+        // 1. 準備資料
+        const tmpl = this.renderTemplate('tmpl-status-pass', {
+            uid: res.uid || 'N/A',
+            actual: "IG2 AWAN Test OK"
+        });
+        
+        // 2. 更新 UI 狀態
+        this.renderStatus('PASS', tmpl);
+        
+        this.state.scannedCount++;
+        if (this.dom.inputs.barcode) {
+            this.dom.inputs.barcode.focus();
+            this.dom.inputs.barcode.select();
+        }
+    },
+    
+     handleTestAllPass(res) {
+        // 1. 準備資料
+        const tmpl = this.renderTemplate('tmpl-status-pass', {
+            uid: res.uid || 'N/A',
+            actual: "IG2 AWAN Read/Write All Pass"
+        });
+        
+        // 2. 更新 UI 狀態
+        this.renderStatus('PASS', tmpl);
+        
+        this.state.scannedCount++;
+        if (this.dom.inputs.barcode) {
+            this.dom.inputs.barcode.focus();
+            this.dom.inputs.barcode.select();
+        }
+    },
+    
+    handleTestFail(res) {
+        const isVerify = (res.error === 'VERIFY_FAIL');
+        const tmplName = isVerify ? 'tmpl-error-verify' : 'tmpl-error-generic';
+        const data = isVerify ? 
+            { uid: res.uid, expected: res.expected, actual: res.actual } : 
+            { msg: res.msg || 'Error', error: res.error };
+        
+        const tmpl = this.renderTemplate(tmplName, data);
+        
+        // 更新 UI 狀態
+        this.renderStatus('FAIL', tmpl);
+        
+        if (this.dom.inputs.barcode) this.dom.inputs.barcode.select();
+    },
 
     async handleEndSession() { if(confirm("確定結束？")) { await this.apiCall('/api/session/end', 'POST', {}); this.switchView('summary'); } },
     handleBackToSetup() { if(confirm("確定中斷？")) { this.apiCall('/api/session/end', 'POST', {}); this.switchView('setup'); } },
