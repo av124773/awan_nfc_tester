@@ -6,6 +6,7 @@ import threading
 import csv
 import re
 import time
+import glob
 from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from contextlib import asynccontextmanager
@@ -88,6 +89,9 @@ class SessionManager:
         self.csv_filename = os.path.join(DATA_DIR, f"{self.session_id}.csv")
         self._init_csv()
         
+	# 【新增持久化】: 從過去的 CSV 載入該工單已 PASS 的條碼
+        self._load_historical_barcodes(wo)
+
         logger.info(f"Session Started: {self.session_id} | Data: {data}")
         return self.session_id
 
@@ -117,6 +121,26 @@ class SessionManager:
                     writer.writerow(header)
             except Exception as e:
                 logger.error(f"Failed to init CSV: {e}")
+
+    def _load_historical_barcodes(self, wo: str):
+        """讀取歷史 CSV 重建已測條碼，防止斷電重啟後資料遺失"""
+        pattern = os.path.join(DATA_DIR, f"{wo}_*.csv")
+        for filepath in glob.glob(pattern):
+            try:
+                with open(filepath, 'r', encoding='utf-8-sig') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        try:
+                            barcode = row.get("Barcode", "").strip()
+                            action = row.get("Action", "")
+                            status = row.get("Status", "")
+                            # 只攔截有 PASS 通過驗證的資料
+                            if barcode and action == "VERIFY" and status == "PASS":
+                                self.scanned_barcodes.add(barcode)
+                        except Exception:
+                            continue
+            except Exception as e:
+                logger.warning(f"Failed to read historical CSV {filepath}: {e}")
 
     def log_result(self, barcode: str, action: str, result: dict):
         if not self.active or not self.csv_filename: return
@@ -224,10 +248,15 @@ async def get_config():
 @app.post("/api/session/start")
 async def start_session(request: Request):
     body = await request.json()
-    
+    print(body)
     if session_mgr.active:
         return {"status": "FAIL", "error": "SESSION_ACTIVE", "message": "已有進行中的工單"}
     
+    # 範本長度防呆檢驗
+    template_barcode = body.get("template_barcode", "")
+    if len(template_barcode) < 21:
+        return {"status": "FAIL", "error": "INVALID_TEMPLATE", "message": f"範本條碼長度錯誤 (需至少 21 碼)(當前長度{len(template_barcode)})"}
+
     sid = session_mgr.start_session(body)
     return {"status": "OK", "session_id": sid}
 
@@ -240,9 +269,31 @@ async def end_session():
 async def check_barcode(req: CheckBarcodeRequest):
     if not session_mgr.active or req.session_id != session_mgr.session_id:
         return {"status": "FAIL", "error": "INVALID_SESSION", "message": "Session 無效"}
-    if req.barcode in session_mgr.scanned_barcodes:
-        return {"status": "FAIL", "error": "DUPLICATE_SCAN", "message": "重複條碼"}
+    
+    target = req.barcode
+    template = session_mgr.session_data.get("template_barcode", "")
+
+    # 1. 範本長度檢查
+    if len(target) != 21:
+        return {"status": "FAIL", "error": "FORMAT_ERROR", "message": f"條碼長度錯誤 (要求 21，目前 {len(target)})"}
+
+    # 2. 固定碼檢查 (第 1~14 碼與第 20~21 碼)
+    if target[:14] != template[:14] or target[19:21] != template[19:21]:
+        return {"status": "FAIL", "error": "FORMAT_ERROR", "message": "條碼固定碼區段與範本不符"}
+
+    # 3. 流水碼 Base32 檢查 (第 15~19 碼)
+    seq_part = target[14:19]
+    if not re.match(r'^[0-9A-V]{5}$', seq_part):
+        return {"status": "FAIL", "error": "FORMAT_ERROR", "message": "流水碼區段不符合 Base32 格式"}
+
+    # 4. 去重校驗 (極速記憶體查詢)
+    if target in session_mgr.scanned_barcodes:
+        return {"status": "FAIL", "error": "DUPLICATE_SCAN", "message": "重複測試，該條碼已 PASS"}
+        
     return {"status": "OK"}
+    ##if req.barcode in session_mgr.scanned_barcodes:
+    ##    return {"status": "FAIL", "error": "DUPLICATE_SCAN", "message": "重複條碼"}
+    ##return {"status": "OK"}
 
 @app.get("/api/session/download_csv")
 async def download_csv(session_id: Optional[str] = None):

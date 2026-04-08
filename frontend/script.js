@@ -19,6 +19,12 @@ const App = {
         window.onload = () => {
             this.cacheDOM();
             if (!this.dom.views.setup) return console.error("Critical: DOM missing");
+
+	    // 恢復上次使用的範本條碼紀錄
+            const tmplInput = document.getElementById('input-template-barcode');
+            const savedTmpl = localStorage.getItem('last_template_barcode');
+            if (tmplInput && savedTmpl) tmplInput.value = savedTmpl;
+
             this.bindEvents();
             this.loadConfigAndResume();
         };
@@ -29,7 +35,7 @@ const App = {
         this.dom = {
             views: { setup: el('view-setup'), test: el('view-test'), summary: el('view-summary') },
             formContainer: el('dynamic-form-container'),
-            inputs: { barcode: el('input-barcode') },
+            inputs: { barcode: el('input-barcode'), template: el('input-template-barcode') },
             displays: { sessionId: el('display-session-id'), status: el('status-display') },
             buttons: {
                 start: el('btn-start-session'), write: el('btn-write'), read: el('btn-read'),
@@ -135,6 +141,20 @@ const App = {
         const payload = {};
         let isValid = true;
         
+	// 1. 檢驗靜態範本欄位
+        if (this.dom.inputs.template) {
+            const val = this.dom.inputs.template.value.trim();
+            if (!val || val.length < 21) {
+                this.dom.inputs.template.style.borderColor = "#dc3545";
+                alert("請掃描或輸入正確的範本條碼 (至少 21 碼)");
+                isValid = false;
+            } else {
+                this.dom.inputs.template.style.borderColor = "#ced4da";
+                payload['template_barcode'] = val;
+                localStorage.setItem('last_template_barcode', val);
+            }
+        }
+
         // 根據 Config 動態抓取 Input 值
         if (this.state.stationConfig) {
             this.state.stationConfig.csv_fields.forEach(f => {
@@ -219,6 +239,7 @@ const App = {
         } else {
             this.renderStatus('FAIL', document.createTextNode(`錯誤: ${res.message}`)); // 或直接傳字串
             this.toggleActionButtons(false);
+	    if (this.dom.inputs.barcode) this.dom.inputs.barcode.select();
         }
     },
     
